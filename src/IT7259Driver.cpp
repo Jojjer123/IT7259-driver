@@ -1,44 +1,10 @@
 #include "IT7259Driver.h"
-// #include "Arduino.h"
-// #include "Wire.h"
+
 /*
 The IT7259 chip uses the I2C address: 1000110
 
 The format for this driver is little endian
-
-Supports the following four types of transfer:
-	Single write
-	Single write with SR
-	Burst read with SR
-	burst read with STOP
-
-
-
-Data Transfer Format:
-	| Device Address | RW | Buffer Index | Reserved | Data 0 --- Data N-1 |
-
-	Device Address: 7-bit
-	RW: 1-bit
-	Buffer Index: 3-bit
-	Reserved: 5-bit
-	Data: Not specified (depends on operation and command)
-
-Buffer Types:
-	000b: Reserved
-	001b: Command Buffer			- 00100000
-	010b: Reserved
-	011b: Reserved
-	100b: Query Buffer				- 10000000
-	101b: Command Response Buffer	- 10100000
-	110b: Reserved
-	111b: Point Information Buffer	- 11100000
-
-In order to save memory, Command Buffer can be the same as Command Response Buffer.
-
-When a command has been sent to the device, either the correct response or an error code will be in the "Command Response Buffer".
-
 */
-
 #define DELAY_BETWEEN_TRANSMISSIONS 1
 
 #define DEBUG_LEVEL 1
@@ -49,12 +15,12 @@ When a command has been sent to the device, either the correct response or an er
 #define SCREEN_OFFSET_X 0
 #define SCREEN_OFFSET_Y 0
 
-
 #define DEVICE_ADDRESS 0x46 // (1000110 is 46 in hex)
 
 #define BURST_WRITE_COMMAND_BUFFER 0x20
 #define BURST_READ_COMMAND_BUFFER 0xA0
 #define POINT_INFORMATION_BUFFER 0xE0
+#define QUERY_BUFFER 0x80
 
 #define DEVICE_NAME_LENGTH 0x0A
 
@@ -156,146 +122,6 @@ DATA FORMAT:
 */
 
 
-/*
-Writes a buffer to the device, after writing a repeated start bit will be sent.
-*/
-bool writeToBufferWithRepeatedStartBit(uint8_t deviceAddress, uint8_t buffer)
-{
-	Wire.beginTransmission(deviceAddress);
-	Wire.write(buffer);
-	byte error = Wire.endTransmission(false);
-
-	if (error != 0)
-	{
-		if (DEBUG_LEVEL >= DEBUG)
-		{
-			Serial.print("Failed to write command with error: ");
-			Serial.print(error);
-			Serial.println(" | This happened in function writeToBufferWithRepeatedStartBit");
-		}
-
-		return false;
-	}
-
-	return true;
-}
-
-
-void readFromDevice(uint8_t deviceAddress, uint8_t lengthToRead, byte *responseBuffer)
-{
-	Wire.requestFrom(deviceAddress, lengthToRead);
-
-	uint8_t index = 0;
-	while (Wire.available())
-	{
-		responseBuffer[index++] = Wire.read();
-	}
-}
-
-
-int8_t getTypeOfEvent(byte formatData)
-{
-	if (formatData >> 4 == 8)
-	{
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Event type is: Gesture information");
-		
-		return 0;
-	}
-	else if (formatData >> 4 == 4)
-	{
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Event type is: Touch Event");
-		
-		return 1;
-	}
-	else if (formatData >> 4 == 1)
-	{
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Event type is: Wakeup");
-		
-		return 2;
-	}
-	else if (formatData >> 4 == 0)
-	{
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Event type is: Point information");
-		
-		return 3;
-	}
-	
-	if (DEBUG_LEVEL >= DEBUG)
-	{
-		Serial.print("Event type is unknown with code: ");
-		Serial.println(formatData >> 4);
-	}
-
-	return -1;
-}
-
-
-void getGesture(byte *responseBuffer, struct TouchPointData *responseData)
-{
-	if (DEBUG_LEVEL >= DEBUG)
-		Serial.println("Need to implement classes extending a super-class Gesture");
-	switch (responseBuffer[1])
-	{
-	case TAP:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Tap");
-		
-		responseData->xPos = responseBuffer[2] + SCREEN_OFFSET_X;
-		responseData->yPos = responseBuffer[4] + SCREEN_OFFSET_Y;
-		responseData->isNull = false;
-		break;
-	case PRESS:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Press");
-		break;
-	case FLICK:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Flick");
-		break;
-	case DOUBLE_TAP:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Double-Tap");
-		break;
-	case TAP_AND_SLIDE:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Tap-and-Slide");
-		break;
-	case DRAG:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Drag");
-		break;
-	case DIRECTION:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Direction");
-		break;
-	case TURN:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Turn");
-		break;
-	case CLOCKWISE:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Clockwise");
-		break;
-	case DIR_4WAY:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Dir_4Way");
-		break;
-	
-	default:
-		if (DEBUG_LEVEL >= DEBUG)
-			Serial.println("Gesture is: Unknown");
-		break;
-	}
-}
-
-
-
-
-
 
 /*
 *	Write using burst to command buffer.
@@ -306,18 +132,24 @@ void getGesture(byte *responseBuffer, struct TouchPointData *responseData)
 *	* write command
 *	* write sub command if provided
 */
-void writeToCommandBuffer(uint8_t deviceAddress, uint8_t command, int8_t subCommand = -1, int8_t parameter = -1, int8_t extraParameter = -1)
+void writeToCommandBuffer(uint8_t deviceAddress, bool repeatedStartBit, uint8_t buffer, int8_t command = -1, int8_t subCommand = -1, int8_t parameter = -1, int8_t extraParameter = -1)
 {
 	Wire.beginTransmission(deviceAddress);
-	Wire.write(BURST_WRITE_COMMAND_BUFFER);
-	Wire.write(command);
-	if (subCommand != -1)
-		Wire.write(subCommand);
-	if (parameter != -1)
-		Wire.write(parameter);
-	if (extraParameter != -1)
-		Wire.write(extraParameter);
-	uint16_t error = Wire.endTransmission(true);
+	Wire.write(buffer);
+
+	if (command != -1)
+	{
+		Serial.println("DAFUQ");
+		Wire.write(command);
+		if (subCommand != -1)
+			Wire.write(subCommand);
+		if (parameter != -1)
+			Wire.write(parameter);
+		if (extraParameter != -1)
+			Wire.write(extraParameter);
+	}
+
+	uint16_t error = Wire.endTransmission(!repeatedStartBit); // repeated start bit should send false here
 
 	if (error != 0)
 	{
@@ -392,26 +224,22 @@ void writeToCommandBuffer(uint8_t deviceAddress, uint8_t command, int8_t subComm
 
 /*
 *	Reads using burst read from the command response buffer.
-*
-*	Order of operations:
-*	* start transmission
-*	* write into mode-register
-*	* retransmitt start transmission
-*	* delay
-*	* request data and how many bytes to read
 */
-void readFromCommandResponseBuffer(uint8_t deviceAddress, uint8_t lengthToRead, uint8_t *response)
+void readFromCommandResponseBuffer(uint8_t deviceAddress, int8_t buffer, uint8_t lengthToRead, uint8_t *response)
 {
-	Wire.beginTransmission(deviceAddress);
-	Wire.write(BURST_READ_COMMAND_BUFFER);
-	byte error = Wire.endTransmission(false);
-	// Delay before sending request to device (it cannot handle too fast transmission I guess)
-	delay(DELAY_BETWEEN_TRANSMISSIONS);
-
-	if (error != 0)
+	if (buffer != -1)
 	{
-		Serial.print("Failed to write command with error: ");
-		Serial.println(error);
+		Wire.beginTransmission(deviceAddress);
+		Wire.write(buffer);
+		uint16_t error = Wire.endTransmission(false);
+		
+		delay(DELAY_BETWEEN_TRANSMISSIONS); // Delay before sending request to device (it cannot handle too fast transmission)
+
+		if (error != 0)
+		{
+			Serial.print("Failed to write command with error: ");
+			Serial.println(error);
+		}
 	}
 
 	Wire.requestFrom(deviceAddress, lengthToRead);
@@ -426,93 +254,121 @@ void readFromCommandResponseBuffer(uint8_t deviceAddress, uint8_t lengthToRead, 
 	delay(DELAY_BETWEEN_TRANSMISSIONS);
 }
 
-uint8_t readQueryBuffer(uint8_t deviceAddress, uint8_t lengthToRead)
+int8_t getTypeOfEvent(byte formatData)
 {
-	Wire.beginTransmission(deviceAddress);
-	Wire.write(0x80);
-	byte error = Wire.endTransmission(false);
-	// Delay before sending request to device (it cannot handle too fast transmission I guess)
-	delay(DELAY_BETWEEN_TRANSMISSIONS);
-
-	if (error != 0)
+	if (formatData >> 4 == 8)
 	{
-		Serial.print("Failed to write command with error: ");
-		Serial.println(error);
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Event type is: Gesture information");
+		
+		return 0;
 	}
-
-	Wire.requestFrom(deviceAddress, lengthToRead);
+	else if (formatData >> 4 == 4)
+	{
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Event type is: Touch Event");
+		
+		return 1;
+	}
+	else if (formatData >> 4 == 1)
+	{
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Event type is: Wakeup");
+		
+		return 2;
+	}
+	else if (formatData >> 4 == 0)
+	{
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Event type is: Point information");
+		
+		return 3;
+	}
 	
-	byte response = 0;
-	while (Wire.available())
+	if (DEBUG_LEVEL >= DEBUG)
 	{
-		response = Wire.read();
-		// Serial.print(response & 11000000);
-		// Serial.print(" ");
+		Serial.print("Event type is unknown with code: ");
+		Serial.println(formatData >> 4);
 	}
-	// Serial.println("");
 
-	return response >> 6;
+	return -1;
 }
 
-/*
-Needs to be reworked
-*/
-void getDeviceName()
+void getGesture(byte *responseBuffer, struct TouchPointData *responseData)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, DEVICE_NAME);
-
-	uint8_t response[DEVICE_NAME_LENGTH];
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, DEVICE_NAME_LENGTH, response);
+	if (DEBUG_LEVEL >= DEBUG)
+		Serial.println("Need to implement classes extending a super-class Gesture");
+	switch (responseBuffer[1])
+	{
+	case TAP:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Tap");
+		
+		responseData->xPos = responseBuffer[2] + SCREEN_OFFSET_X;
+		responseData->yPos = responseBuffer[4] + SCREEN_OFFSET_Y;
+		responseData->isNull = false;
+		break;
+	case PRESS:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Press");
+		break;
+	case FLICK:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Flick");
+		break;
+	case DOUBLE_TAP:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Double-Tap");
+		break;
+	case TAP_AND_SLIDE:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Tap-and-Slide");
+		break;
+	case DRAG:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Drag");
+		break;
+	case DIRECTION:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Direction");
+		break;
+	case TURN:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Turn");
+		break;
+	case CLOCKWISE:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Clockwise");
+		break;
+	case DIR_4WAY:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Dir_4Way");
+		break;
 	
-	// for (int i = 0; i < 10; i++)
-	// 	Serial.println((char)response[i]);
+	default:
+		if (DEBUG_LEVEL >= DEBUG)
+			Serial.println("Gesture is: Unknown");
+		break;
+	}
 }
 
 /*
 *	The same as readFromCommandResponseBuffer just other register to read from
 *	Read point information from point information buffer
-*
-*	Order of operations:
-*	* start transmission
-*	* write into mode-register
-*	* retransmit start transmission
-*	* delay
-*	* request data and how many bytes to read
 */
 void readPointInformation(uint8_t deviceAddress, uint8_t lengthToRead, TouchPointData* dataBuffer)
 {
-	// Write to buffer on device
-	if (!writeToBufferWithRepeatedStartBit(deviceAddress, POINT_INFORMATION_BUFFER))
-	{
-		if (DEBUG_LEVEL >= INFO)
-			Serial.println("Failed to write to buffer");
-
-		// TODO: Recover/try again if writing fails
-	}
+	writeToCommandBuffer(deviceAddress, true, POINT_INFORMATION_BUFFER);
 	
-	// Delay before sending request to device (it cannot handle too fast transmission I guess)
-	delay(DELAY_BETWEEN_TRANSMISSIONS);
+	delay(DELAY_BETWEEN_TRANSMISSIONS); // Delay before sending request to device (it cannot handle too fast transmission)
 
-	// Read bytes from device
-	byte responseBuffer[lengthToRead];
-
-	readFromDevice(deviceAddress, lengthToRead, responseBuffer);
-
-	// if (DEBUG_LEVEL >= DEBUG)
-	// {
-	// 	Serial.println("------------------");
-	// 	for (size_t i = 0; i < lengthToRead; i++)
-	// 	{
-	// 		Serial.println(responseBuffer[i]);
-	// 	}
-	// 	Serial.println("------------------");
-	// }
+	uint8_t responseBuffer[lengthToRead];
+	readFromCommandResponseBuffer(deviceAddress, -1, lengthToRead, responseBuffer);
 
 	int8_t eventType = getTypeOfEvent(responseBuffer[0]);
 
 	if (eventType == 0) // Gesture event
 	{
-		// uint8_t gesture = getTypeOfGesture(responseBuffer[1]);
 		getGesture(responseBuffer, dataBuffer);
 	}
 	else if (eventType == 1) // Touch event
@@ -534,46 +390,54 @@ void readPointInformation(uint8_t deviceAddress, uint8_t lengthToRead, TouchPoin
 }
 
 /*
-Requires one initial read before main loop of program, touch panel will report one touch event on boot.
+*	Reads the next in queue touch event of the panel
 */
 void readTouchEvent(struct TouchPointData *dataBuffer)
 {
-	// Serial.println("yep cock");
-	// Serial.println(dataBuffer->xPos);
-	// dataBuffer->isNull = false;
-	// dataBuffer->xPos = 50;
-	// dataBuffer->yPos = 50;
-	// return;
+	writeToCommandBuffer(DEVICE_ADDRESS, true, QUERY_BUFFER);
 
+	delay(DELAY_BETWEEN_TRANSMISSIONS);
+	
+	uint8_t packetInformationStatus;
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, -1, 1, &packetInformationStatus);
+	packetInformationStatus = packetInformationStatus >> 6;
 
-	while (true)
+	if (packetInformationStatus >> 1 == 1) // change to == 3 without bit-shift
 	{
-		uint8_t packetInformationStatus = readQueryBuffer(DEVICE_ADDRESS, 1);
-
-		if (packetInformationStatus >> 1 == 1)
-		{
-			readPointInformation(DEVICE_ADDRESS, 14, dataBuffer);
-			return;
-		}
-		else if (packetInformationStatus == 1)
-		{
-			dataBuffer->isNull = true;
-			return;
-		}
-		delay(DELAY_BETWEEN_TRANSMISSIONS);
+		readPointInformation(DEVICE_ADDRESS, 14, dataBuffer);
+		return;
 	}
+	else if (packetInformationStatus == 1)
+	{
+		dataBuffer->isNull = true;
+		return;
+	}
+	
+	delay(DELAY_BETWEEN_TRANSMISSIONS);
+
 	dataBuffer->isNull = true;
 	return;
 }
 
 
 
+/*
+Needs to be reworked
+*/
+void getDeviceName()
+{
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, DEVICE_NAME);
 
+	uint8_t response[10]; // 10 = 0x0A
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, 10, response); // 10 = 0x0A
+}
 
-
+/*
+*	Get the firmware version of the panel
+*/
 void getFirmwareInfo(struct PanelCapabilities *panelCap, bool readVendorFirmwareVersion = false)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, FIRMWARE_INFO);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, FIRMWARE_INFO);
 
 	uint8_t length = 0;
 	if (readVendorFirmwareVersion)
@@ -582,7 +446,7 @@ void getFirmwareInfo(struct PanelCapabilities *panelCap, bool readVendorFirmware
 		length = 9; // 9 = 0x09
 	
 	uint8_t response[length];
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, length, response);
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, length, response);
 
 	// The response from the touch panel is added to user provided buffer below
 	for (int i = 0; i < 4; i++)
@@ -595,12 +459,15 @@ void getFirmwareInfo(struct PanelCapabilities *panelCap, bool readVendorFirmware
 		panelCap->vendorFirmwareVersion = response[length - 1];
 }
 
+/*
+*	Get panel specific details such as resolution
+*/
 void getPanelResolutions(struct PanelCapabilities *panelCap)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, PANEL_RES);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, PANEL_RES);
 
 	uint8_t response[12]; // 12 = 0x0C
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 12, response); // 12 = 0x0C
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 12, response); // 12 = 0x0C
 
 	// The response from the touch panel is added to user provided buffer below
 	panelCap->xRes = response[3] << 8 | response[2];
@@ -611,32 +478,38 @@ void getPanelResolutions(struct PanelCapabilities *panelCap)
 	panelCap->stageB = response[9];
 	panelCap->stageC = response[10];
 	panelCap->stageD = response[11];
-
-	// for(int i = 0; i < 12; i++)
-	// 	Serial.println(response[i]);
 }
 
+/*
+*	Get the code size on the flash memory
+*/
 void getFlashSize(struct PanelCapabilities *panelCap)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, FLASH_SIZE);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, FLASH_SIZE);
 
 	uint8_t response[3]; // 3 = 0x03
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 3, response); // 3 = 0x03
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 3, response); // 3 = 0x03
 
 	panelCap->flashCodeSize = response[2] << 8 | response[1]; // LSB and first byte is size of response
 }
 
+/*
+*	Get interrupt status and what triggers an interrupt
+*/
 void getInterrupNotificationStatus(struct PanelCapabilities *panelCap)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, INT_NOTIFICATION_STATUS);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, INT_NOTIFICATION_STATUS);
 
 	uint8_t response[2];
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response);
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response);
 
 	panelCap->interruptNotificationStatus = response[0];
 	panelCap->interruptType = response[1];
 }
 
+/*
+*	Count number of bits set to 1 in a byte
+*/
 uint8_t countNumberOfBitsSetToOne(uint8_t byteToCheck)
 {
 	uint8_t currentByte = byteToCheck;
@@ -649,12 +522,16 @@ uint8_t countNumberOfBitsSetToOne(uint8_t byteToCheck)
 	return counter;
 }
 
+/*
+*	Get the gesture capabilities
+*	Will save the number of gestures supported
+*/
 void getGestureInfo(struct PanelCapabilities *panelCap)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, GESTURE_INFO);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, GESTURE_INFO);
 
 	uint8_t response[14]; // 14 = 0x0E
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 14, response); // 14 = 0x0E
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 14, response); // 14 = 0x0E
 
 	panelCap->gestureSupport = response[1]; // Skip first byte which is the size of the response
 
@@ -675,23 +552,20 @@ void getGestureInfo(struct PanelCapabilities *panelCap)
 		counter += countNumberOfBitsSetToOne(response[i]);
 
 	panelCap->threeFingerGesture = counter;
-
-	// for(int i = 0; i < 14; i++)
-	// 	Serial.println(response[i]);
 }
 
+/*
+*	Get the version of the configuration
+*/
 void getConfigurationVersion(struct PanelCapabilities *panelCap)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_PANEL_INFO, CONFIG_VERSION);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_PANEL_INFO, CONFIG_VERSION);
 
 	uint8_t response[7]; // 7 = 0x07
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 7, response); // 7 = 0x07
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 7, response); // 7 = 0x07
 
 	for (int i = 1; i < 5; i++) // Skip first byte which is the size of the response
 		panelCap->configVersion[i - 1] = response[i];
-
-	// for(int i = 0; i < 7; i++)
-	// 	Serial.println(response[i]);
 }
 
 /*
@@ -702,13 +576,10 @@ void getPanelCapabilities(struct PanelCapabilities *panelCap)
 	getFirmwareInfo(panelCap, true);
 	getPanelResolutions(panelCap);
 	getFlashSize(panelCap);
-	getInterrupNotificationStatus(panelCap);
+	getInterruptNotificationStatus(panelCap);
 	getGestureInfo(panelCap);
 	getConfigurationVersion(panelCap);
 }
-
-
-
 
 /*	PARAM DESCRIPTION
 *	status:
@@ -723,10 +594,10 @@ void getPanelCapabilities(struct PanelCapabilities *panelCap)
 */ 
 void setInterruptNotificationBehaviour(uint8_t status, uint8_t type)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, SET_PANEL_INFO, INT_NOTIFICATION_STATUS, status, type);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_PANEL_INFO, INT_NOTIFICATION_STATUS, status, type);
 
 	uint8_t response[2]; // 0x0000 is two bytes
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response); // 0x0000 is two bytes
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response); // 0x0000 is two bytes
 
 	if ((response[1] << 8 | response[0]) == 0)
 	{
@@ -742,7 +613,6 @@ void setInterruptNotificationBehaviour(uint8_t status, uint8_t type)
 	}
 }
 
-
 /*
 * When setting the power mode to idle, the power consumption goes from 1.5mA (active) to 25uA (idle).
 * In idle mode the device no longer report packets of points and gestures.
@@ -750,21 +620,20 @@ void setInterruptNotificationBehaviour(uint8_t status, uint8_t type)
 */
 void setPowerModeIdle()
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, SET_POWER_MODE, 0, 1);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_POWER_MODE, 0, 1);
 
 	// Response is not defined in the datasheet
 }
-
 
 /*
 *	Reset the queue of point/gesture/event information of the ITE Cap Sensor device
 */
 void resetEventQueue()
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, RESET_QUEUE);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, RESET_QUEUE);
 
 	uint8_t response[2]; // 0x0000 is two bytes
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response); // 0x0000 is two bytes
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response); // 0x0000 is two bytes
 
 	if (DEBUG_LEVEL >= DEBUG)
 	{
@@ -775,17 +644,16 @@ void resetEventQueue()
 	}
 }
 
-
 /*
 *	Reinitialize the firmware (Reset)
 *	The capacitive touch panel will be reset and requires 100ms to be in a ready state again
 */
 void resetFirmware()
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, REINITIALIZE_FIRMWARE);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, REINITIALIZE_FIRMWARE);
 
 	uint8_t response[2]; // 0x0000 is two bytes
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response); // 0x0000 is two bytes
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response); // 0x0000 is two bytes
 
 	if (DEBUG_LEVEL >= DEBUG)
 	{
@@ -802,12 +670,12 @@ void resetFirmware()
 void setChargeMode(bool status)
 {
 	if (status)
-		writeToCommandBuffer(DEVICE_ADDRESS, SET_CHARGE_MODE, 1); // Enter charge mode
+		writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_CHARGE_MODE, 1); // Enter charge mode
 	else
-		writeToCommandBuffer(DEVICE_ADDRESS, SET_CHARGE_MODE, 0); // Enter normal mode
+		writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_CHARGE_MODE, 0); // Enter normal mode
 	
 	uint8_t response[2]; // 0x0000 is two bytes
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response); // 0x0000 is two bytes
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response); // 0x0000 is two bytes
 
 	if (DEBUG_LEVEL >= DEBUG)
 	{
@@ -824,12 +692,12 @@ void setChargeMode(bool status)
 void setGsmMode(bool status)
 {
 	if (status)
-		writeToCommandBuffer(DEVICE_ADDRESS, SET_GSM_MODE, 1); // Enter GSM mode
+		writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_GSM_MODE, 1); // Enter GSM mode
 	else
-		writeToCommandBuffer(DEVICE_ADDRESS, SET_GSM_MODE, 0); // Exit GSM mode
+		writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, SET_GSM_MODE, 0); // Exit GSM mode
 	
 	uint8_t response[2]; // 0x0000 is two bytes
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 2, response); // 0x0000 is two bytes
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 2, response); // 0x0000 is two bytes
 
 	if (DEBUG_LEVEL >= DEBUG)
 	{
@@ -845,16 +713,15 @@ void setGsmMode(bool status)
 */
 void getAlgorithmParam(uint16_t *cdcTuneLevel)
 {
-	writeToCommandBuffer(DEVICE_ADDRESS, GET_ALGORITHM_PARAM, CDC_TUNE_LEVEL);
+	writeToCommandBuffer(DEVICE_ADDRESS, false, BURST_WRITE_COMMAND_BUFFER, GET_ALGORITHM_PARAM, CDC_TUNE_LEVEL);
 
 	uint8_t response[4]; // 4 = 0x04 which is one more than 0x03
-	readFromCommandResponseBuffer(DEVICE_ADDRESS, 3, response); // 4 = 0x04 which is more than 0x03
+	readFromCommandResponseBuffer(DEVICE_ADDRESS, BURST_READ_COMMAND_BUFFER, 3, response); // 4 = 0x04 which is more than 0x03
 
-	// for (int i = 0; i < 4; i++)
-	// 	Serial.println(response[i]);
-	
 	cdcTuneLevel[0] = response[3] << 8 | response[2];
 }
+
+
 
 
 /*
@@ -865,7 +732,3 @@ void setAlgorithmParams()
 {
 
 }
-
-
-
-
